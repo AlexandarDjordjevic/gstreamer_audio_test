@@ -1,13 +1,14 @@
 #include <gst/gst.h>
 #include <gst/audio/audio.h>
 #include <string.h>
+#include <stdio.h>
 
-#define CHUNK_SIZE 1024   /* Amount of bytes we are sending in each buffer */
+#define CHUNK_SIZE 4096   /* Amount of bytes we are sending in each buffer */
 #define SAMPLE_RATE 44100 /* Samples per second we are sending */
 
 /* Structure to contain all our information, so we can pass it to callbacks */
 typedef struct _CustomData {
-  GstElement *pipeline, *app_source, *audio_queue, *audio_convert1, *audio_resample, *audio_sink;
+  GstElement *pipeline, *app_source, *raw_parse, *audio_queue, *audio_convert1, *audio_resample, *audio_sink;
   guint64 num_samples;   /* Number of samples generated so far (for timestamp generation) */
   gfloat a, b, c, d;     /* For waveform generation */
 
@@ -25,30 +26,25 @@ static gboolean push_data (CustomData *data) {
   GstFlowReturn ret;
   int i;
   GstMapInfo map;
-  gint16 *raw;
-  gint num_samples = CHUNK_SIZE / 2; /* Because each sample is 16 bits */
+  static FILE* fp = fopen("/home/syrmia/Videos/audio_record.raw", "rb");
+  
+  gint num_samples = CHUNK_SIZE / 4; /* Because each sample is 16 bits */
   gfloat freq;
+
 
   /* Create a new empty buffer */
   buffer = gst_buffer_new_and_alloc (CHUNK_SIZE);
 
-  /* Set its timestamp and duration */
-  GST_BUFFER_TIMESTAMP (buffer) = gst_util_uint64_scale (data->num_samples, GST_SECOND, SAMPLE_RATE);
-  GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale (num_samples, GST_SECOND, SAMPLE_RATE);
-
   /* Generate some psychodelic waveforms */
   gst_buffer_map (buffer, &map, GST_MAP_WRITE);
-  raw = (gint16 *)map.data;
-  data->c += data->d;
-  data->d -= data->c / 1000;
-  freq = 1100 + 1000 * data->d;
-  for (i = 0; i < num_samples; i++) {
-    data->a += data->b;
-    data->b -= data->a / freq;
-    raw[i] = (gint16)(500 * data->a);
-  }
+  fread(map.data, 1, CHUNK_SIZE, fp);
   gst_buffer_unmap (buffer, &map);
+  GST_BUFFER_PTS (buffer) = gst_util_uint64_scale (data->num_samples, GST_SECOND, SAMPLE_RATE);
+
   data->num_samples += num_samples;
+  /* Set its timestamp and duration */
+  GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale (num_samples, GST_SECOND, SAMPLE_RATE);
+
 
   /* Push the buffer into the appsrc */
   g_signal_emit_by_name (data->app_source, "push-buffer", buffer, &ret);
@@ -83,21 +79,6 @@ static void stop_feed (GstElement *source, CustomData *data) {
   }
 }
 
-/* The appsink has received a buffer */
-static GstFlowReturn new_sample (GstElement *sink, CustomData *data) {
-  GstSample *sample;
-
-  /* Retrieve the buffer */
-  g_signal_emit_by_name (sink, "pull-sample", &sample);
-  if (sample) {
-    /* The only thing we do in this example is print a * to indicate a received buffer */
-    g_print ("*");
-    gst_sample_unref (sample);
-    return GST_FLOW_OK;
-  }
-
-  return GST_FLOW_ERROR;
-}
 
 /* This function is called when an error message is posted on the bus */
 static void error_cb (GstBus *bus, GstMessage *msg, CustomData *data) {
@@ -132,6 +113,7 @@ int main(int argc, char *argv[]) {
 
   /* Create the elements */
   data.app_source = gst_element_factory_make ("appsrc", "audio_source");
+  data.raw_parse = gst_element_factory_make ("rawaudioparse", "raw_audio_parse");
   data.audio_queue = gst_element_factory_make ("queue", "audio_queue");
   data.audio_convert1 = gst_element_factory_make ("audioconvert", "audio_convert1");
   data.audio_resample = gst_element_factory_make ("audioresample", "audio_resample");
@@ -151,8 +133,8 @@ int main(int argc, char *argv[]) {
   gst_caps_unref (audio_caps);
 
   /* Link all elements that can be automatically linked because they have "Always" pads */
-  gst_bin_add_many (GST_BIN (data.pipeline), data.app_source, data.audio_queue, data.audio_convert1, data.audio_resample, data.audio_sink, NULL);
-  if (gst_element_link_many (data.app_source, data.audio_queue, data.audio_convert1, data.audio_resample, data.audio_sink, NULL) != TRUE ){
+  gst_bin_add_many (GST_BIN (data.pipeline), data.app_source, data.raw_parse, data.audio_queue, data.audio_convert1, data.audio_resample, data.audio_sink, NULL);
+  if (gst_element_link_many (data.app_source, data.raw_parse, data.audio_queue, data.audio_convert1, data.audio_resample, data.audio_sink, NULL) != TRUE ){
     g_printerr ("Elements could not be linked.\n");
     gst_object_unref (data.pipeline);
     return -1;
