@@ -32,12 +32,11 @@ static gboolean push_data (CustomData *data) {
   gst_buffer_map (buffer, &map, GST_MAP_WRITE);
   fread(map.data, 1, CHUNK_SIZE, fp);
   gst_buffer_unmap (buffer, &map);
-  GST_BUFFER_PTS (buffer) = gst_util_uint64_scale (data->num_samples, GST_SECOND, SAMPLE_RATE);
 
-  data->num_samples += num_samples;
   /* Set its timestamp and duration */
+  GST_BUFFER_PTS (buffer) = gst_util_uint64_scale (data->num_samples, GST_SECOND, SAMPLE_RATE);
   GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale (num_samples, GST_SECOND, SAMPLE_RATE);
-
+  data->num_samples += num_samples;
 
   /* Push the buffer into the appsrc */
   g_signal_emit_by_name (data->app_source, "push-buffer", buffer, &ret);
